@@ -13,7 +13,11 @@ interface Detection {
 
 interface Result {
   has_stone: boolean;
-  detections: Detection[];
+  detections: {
+    detections: Detection[];
+    num_detections: number;
+  };
+  features: Record<string, unknown>;
   annotated_image: string;
   report: string;
 }
@@ -350,7 +354,7 @@ export default function LiveDemo() {
                   borderRadius: "999px",
                   border: `1px solid ${result.has_stone ? "rgba(56,189,248,0.25)" : "rgba(74,222,128,0.25)"}`,
                 }}>
-                  {result.has_stone ? `${Array.isArray(result.detections) ? result.detections.length : "1"} taş tespit edildi` : "Taş tespit edilmedi"}
+                  {result.has_stone ? `${result.detections?.detections?.length ?? result.detections?.num_detections ?? "?"} taş tespit edildi` : "Taş tespit edilmedi"}
                 </span>
               </div>
 
@@ -366,9 +370,9 @@ export default function LiveDemo() {
               />
 
               {/* Detections */}
-              {result.detections.length > 0 && (
+              {result.detections.detections.length > 0 && (
                 <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-                  {result.detections.map((d, i) => (
+                  {result.detections.detections.map((d, i) => (
                     <div key={i} style={{
                       display: "flex",
                       justifyContent: "space-between",
