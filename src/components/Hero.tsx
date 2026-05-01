@@ -574,7 +574,7 @@ export default function Hero({ onDemoClick, loadingProgress, loadingMessage, mod
                         color: "#4ade80",
                         marginBottom: "2px",
                       }}>
-                        Model hazır
+                        Model is ready
                       </p>
                       <p style={{
                         fontFamily: "monospace",
