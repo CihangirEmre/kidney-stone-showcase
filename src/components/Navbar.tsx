@@ -28,7 +28,7 @@ export default function Navbar() {
       style={{
         position: "fixed",
         top: 0,
-        left: 0,
+        left: "var(--sidebar-width)",
         right: 0,
         zIndex: 50,
         display: "flex",

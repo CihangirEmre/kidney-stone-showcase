@@ -1,6 +1,6 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import PixelDoctor from "./PixelDoctor";
+import CircularProgress from "./CircularProgress";
 
 const HF_SPACE_URL = "https://CihanEmre-ModelsSpace.hf.space";
 
@@ -22,13 +22,25 @@ interface Result {
   report: string;
 }
 
-export default function LiveDemo() {
+interface LiveDemoProps {
+  modelReady: boolean;
+  loadingProgress: number;
+  loadingMessage: string;
+}
+
+export default function LiveDemo({ modelReady, loadingProgress, loadingMessage }: LiveDemoProps) {
   const [stage, setStage] = useState<Stage>("loading");
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
   const [result, setResult] = useState<Result | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
+
+  useEffect(() => {
+    if (modelReady && stage === "loading") {
+      setStage("upload");
+    }
+  }, [modelReady, stage]);
 
   const handleFile = (f: File) => {
     setFile(f);
@@ -62,7 +74,7 @@ export default function LiveDemo() {
       const data: Result = await res.json();
       setResult(data);
       setStage("result");
-    } catch (err) {
+    } catch {
       setError("Bir hata oluştu. Lütfen tekrar deneyin.");
       setStage("upload");
     }
@@ -137,8 +149,33 @@ export default function LiveDemo() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              gap: "1.5rem",
+            }}
           >
-            <PixelDoctor onReady={() => setStage("upload")} />
+            <CircularProgress progress={loadingProgress} size={100} strokeWidth={4} showPercent />
+            <div style={{ textAlign: "center" }}>
+              <p style={{
+                fontFamily: "'DM Sans', sans-serif",
+                fontSize: "0.9rem",
+                color: "var(--text-secondary)",
+                marginBottom: "4px",
+              }}>
+                {loadingMessage}
+              </p>
+              <p style={{
+                fontFamily: "monospace",
+                fontSize: "0.68rem",
+                color: "var(--text-secondary)",
+                letterSpacing: "0.06em",
+                opacity: 0.55,
+              }}>
+                YOLO26-seg warm start
+              </p>
+            </div>
           </motion.div>
         )}
 
@@ -189,11 +226,10 @@ export default function LiveDemo() {
                 />
               ) : (
                 <>
-                  {/* Upload ikonu */}
                   <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-                    <polyline points="17 8 12 3 7 8"/>
-                    <line x1="12" y1="3" x2="12" y2="15"/>
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                    <polyline points="17 8 12 3 7 8" />
+                    <line x1="12" y1="3" x2="12" y2="15" />
                   </svg>
                   <p style={{ color: "var(--text-secondary)", fontSize: "0.9rem", textAlign: "center" }}>
                     CT görüntüsünü buraya sürükleyin<br />
@@ -216,7 +252,6 @@ export default function LiveDemo() {
               />
             </div>
 
-            {/* Dosya adı */}
             {file && (
               <p style={{
                 fontFamily: "monospace",
@@ -228,14 +263,12 @@ export default function LiveDemo() {
               </p>
             )}
 
-            {/* Hata */}
             {error && (
               <p style={{ color: "#f87171", fontSize: "0.85rem", textAlign: "center" }}>
                 {error}
               </p>
             )}
 
-            {/* Not */}
             <p style={{
               fontSize: "0.75rem",
               color: "var(--text-secondary)",
@@ -245,7 +278,6 @@ export default function LiveDemo() {
               İlk analiz ~30 saniye sürebilir (model soğuk başlatma)
             </p>
 
-            {/* Analiz butonu */}
             <button
               onClick={handleAnalyze}
               disabled={!file}
@@ -369,7 +401,6 @@ export default function LiveDemo() {
                 }}
               />
 
-              {/* Detections */}
               {result.detections.detections.length > 0 && (
                 <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
                   {result.detections.detections.map((d, i) => (
@@ -417,7 +448,6 @@ export default function LiveDemo() {
                 {result.report}
               </div>
 
-              {/* Tekrar dene */}
               <button
                 onClick={handleReset}
                 style={{

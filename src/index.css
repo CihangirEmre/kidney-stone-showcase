@@ -10,6 +10,12 @@
   --card-bg: #0f1318;
   --card-border: rgba(255,255,255,0.08);
   --grid-line: rgba(255,255,255,0.04);
+  --sidebar-width: 185px;
+}
+
+@media (max-width: 768px) {
+  :root { --sidebar-width: 0px; }
+  .sidebar { display: none !important; }
 }
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }

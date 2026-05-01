@@ -1,138 +1,297 @@
 import { useEffect, useRef } from "react";
-import { motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
+import CircularProgress from "./CircularProgress";
 
-const GRID_COLS = 28;
-const GRID_ROWS = 18;
-
-function CTGrid() {
+function KidneyDetection() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const ctx = canvas.getContext("2d");
+    const ctx = canvas.getContext("2d") as CanvasRenderingContext2D;
     if (!ctx) return;
 
-    const W = canvas.width;
-    const H = canvas.height;
-    const cellW = W / GRID_COLS;
-    const cellH = H / GRID_ROWS;
+    const W = 420, H = 270;
+    const CELL = 12;
+    const COLS = Math.ceil(W / CELL);
+    const ROWS = Math.ceil(H / CELL);
 
-    // Generate grayscale CT-like grid values
-    const cells: number[][] = [];
-    for (let r = 0; r < GRID_ROWS; r++) {
-      cells[r] = [];
-      for (let c = 0; c < GRID_COLS; c++) {
-        // Create a kidney-ish oval shape in center-left
-        const cx = GRID_COLS * 0.38, cy = GRID_ROWS * 0.5;
-        const dx = (c - cx) / (GRID_COLS * 0.18);
-        const dy = (r - cy) / (GRID_ROWS * 0.28);
-        const dist = Math.sqrt(dx * dx + dy * dy);
-        let val = 0;
-        if (dist < 1) val = 0.15 + (1 - dist) * 0.35 + Math.random() * 0.08;
-        else val = Math.random() * 0.06;
-        cells[r][c] = val;
+    // ── Kidney anatomy
+    const KCX = 170, KCY = 133;   // kidney center
+    const KRX = 62,  KRY = 90;    // outer ellipse (portrait: taller than wide)
+    const SX = 147, SY = 112, SR = 11; // stone (hyperdense lesion)
+
+    // Angle-based bean shape: convex outer ellipse with deep hilum notch on right side.
+    // Uses smooth trigonometric formula — guarantees a simple closed boundary (no T-junctions).
+    function cellIsInside(px: number, py: number): boolean {
+      const nx = (px - KCX) / KRX;
+      const ny = (py - KCY) / KRY;
+      const angle = Math.atan2(ny, nx);                       // -π..π; 0 = rightward
+      const adRight = Math.min(Math.abs(angle), 2 * Math.PI - Math.abs(angle));
+      let eff = 1.0;
+      const SPREAD = 1.28;   // notch spans ±73° from right
+      const DEPTH  = 0.52;   // 52 % depth at the rightmost point
+      if (adRight < SPREAD) {
+        const t = Math.pow(1 - adRight / SPREAD, 1.1);
+        eff -= t * DEPTH;
+      }
+      return Math.sqrt(nx * nx + ny * ny) < eff;
+    }
+
+    // ── Build cell grid (used for both background and boundary trace)
+    const grid: boolean[][] = Array.from({ length: ROWS }, (_, r) =>
+      Array.from({ length: COLS }, (_, c) =>
+        cellIsInside(c * CELL + CELL / 2, r * CELL + CELL / 2)
+      )
+    );
+
+    // ── CT Background
+    const bgCanvas = document.createElement("canvas");
+    bgCanvas.width = W; bgCanvas.height = H;
+    const bgCtx = bgCanvas.getContext("2d")!;
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) {
+        const px = c * CELL + CELL / 2, py = r * CELL + CELL / 2;
+        const inStone = Math.sqrt((px - SX) ** 2 + (py - SY) ** 2) < SR;
+        let val: number;
+        if (inStone)       val = 0.75 + Math.random() * 0.22;
+        else if (grid[r][c]) val = 0.18 + Math.random() * 0.09;
+        else               val = Math.random() * 0.05;
+        const b = Math.floor(val * 230);
+        bgCtx.fillStyle = `rgb(${b},${b + 3},${b + 6})`;
+        bgCtx.fillRect(c * CELL, r * CELL, CELL - 1, CELL - 1);
       }
     }
 
-    // Stone highlight
-    const stoneR = Math.floor(GRID_ROWS * 0.44);
-    const stoneC = Math.floor(GRID_COLS * 0.41);
-    for (let dr = -1; dr <= 1; dr++) {
-      for (let dc = -1; dc <= 1; dc++) {
-        if (cells[stoneR + dr]?.[stoneC + dc] !== undefined) {
-          cells[stoneR + dr][stoneC + dc] = 0.75 + Math.random() * 0.2;
-        }
+    // ── Pixel-aligned boundary trace
+    // Build adjacency graph: for each boundary edge between an inside
+    // and outside cell, add an edge between the two cell-corner nodes.
+    const adj = new Map<string, string[]>();
+    const addEdge = (c1: number, r1: number, c2: number, r2: number) => {
+      const k1 = `${c1},${r1}`, k2 = `${c2},${r2}`;
+      if (!adj.has(k1)) adj.set(k1, []);
+      if (!adj.has(k2)) adj.set(k2, []);
+      adj.get(k1)!.push(k2);
+      adj.get(k2)!.push(k1);
+    };
+    const cin = (r: number, c: number) =>
+      r >= 0 && r < ROWS && c >= 0 && c < COLS && grid[r][c];
+
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) {
+        if (!grid[r][c]) continue;
+        if (!cin(r - 1, c)) addEdge(c,     r,     c + 1, r);     // top edge
+        if (!cin(r + 1, c)) addEdge(c,     r + 1, c + 1, r + 1); // bottom edge
+        if (!cin(r, c - 1)) addEdge(c,     r,     c,     r + 1); // left edge
+        if (!cin(r, c + 1)) addEdge(c + 1, r,     c + 1, r + 1); // right edge
       }
     }
+
+    // Find topmost inside cell → walk boundary from its top-left corner
+    let sC = 0, sR = 0;
+    outer: for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) {
+        if (grid[r][c]) { sC = c; sR = r; break outer; }
+      }
+    }
+
+    const segPath: [number, number][] = [];
+    const startKey = `${sC},${sR}`;
+    let cur = startKey, prev: string | null = null;
+    const MAX_WALK = ROWS * COLS * 4;
+    let walkIter = 0;
+    do {
+      const [cx, cy] = cur.split(",").map(Number);
+      segPath.push([cx * CELL, cy * CELL]);
+      const neighbors = adj.get(cur) ?? [];
+      let next: string | null = null;
+      for (const n of neighbors) {
+        if (n !== prev) { next = n; break; }
+      }
+      if (!next) break;
+      prev = cur;
+      cur = next;
+      if (++walkIter > MAX_WALK) break; // safety: prevent infinite loop
+    } while (cur !== startKey);
+    // Close the loop
+    segPath.push(segPath[0]);
+
+    const N = segPath.length;
+
+    // ── Detection box
+    const bx = SX - SR - 14, by = SY - SR - 12;
+    const bw = (SR + 14) * 2,  bh = (SR + 12) * 2;
+
+    // ── Helpers
+    function drawCorners(
+      x: number, y: number, w: number, h: number, alpha: number, len = 11
+    ) {
+      if (alpha <= 0) return;
+      ctx.globalAlpha = alpha;
+      ctx.strokeStyle = "#38bdf8";
+      ctx.lineWidth = 1.5;
+      ([[x, y, 1, 1], [x + w, y, -1, 1], [x, y + h, 1, -1], [x + w, y + h, -1, -1]] as const)
+        .forEach(([cx, cy, sx, sy]) => {
+          ctx.beginPath();
+          ctx.moveTo(cx, cy + sy * len);
+          ctx.lineTo(cx, cy);
+          ctx.lineTo(cx + sx * len, cy);
+          ctx.stroke();
+        });
+      ctx.globalAlpha = 1;
+    }
+
+    function tag(text: string, x: number, y: number, alpha: number, small = false) {
+      if (alpha <= 0) return;
+      const fs = small ? 9 : 10;
+      ctx.font = `bold ${fs}px monospace`;
+      const tw = ctx.measureText(text).width;
+      ctx.globalAlpha = Math.min(alpha * 0.85, 1);
+      ctx.fillStyle = "rgba(8,11,16,0.9)";
+      ctx.fillRect(x - 3, y - fs - 2, tw + 6, fs + 5);
+      ctx.globalAlpha = Math.min(alpha, 1);
+      ctx.fillStyle = "#38bdf8";
+      ctx.fillText(text, x, y);
+      ctx.globalAlpha = 1;
+    }
+
+    function ease(t: number) {
+      return 1 - Math.pow(Math.max(0, 1 - Math.min(t, 1)), 3);
+    }
+
+    function clamp01(t: number) {
+      return Math.max(0, Math.min(1, t));
+    }
+
+    // ── Animation phase boundaries (frames at ~60 fps)
+    // Cycle: BG fade → seg grows → labels/box appear → HOLD →
+    //        labels/box fade out → seg erases from start → restart
+    const P_BG_END   = 20;   // CT background fully visible
+    const P_SEG_DONE = 75;   // segmentation outline complete   (55 frames to grow)
+    const P_KL_IN    = 90;   // "kidney seg" label visible
+    const P_DET_IN   = 130;  // detection box fully in
+    const P_STL_IN   = 152;  // "stone conf=0.91" label visible
+    const P_HOLD_END = 215;  // hold phase ends
+    const P_FADE_END = 235;  // stone label + det box faded out
+    const P_KL_OUT   = 250;  // "kidney seg" label faded out → erase starts
+    const P_ERASE_END = 305; // seg fully erased          (55 frames, same as grow)
+    const CYCLE      = 320;  // restart (brief dark pause)
 
     let frame = 0;
+    let firstCycle = true;
     let animId: number;
-    let scanLine = 0;
-    let bboxOpacity = 0;
-    let bboxVisible = false;
 
     function draw() {
-      ctx!.clearRect(0, 0, W, H);
+      ctx.clearRect(0, 0, W, H);
 
-      // Draw cells
-      for (let r = 0; r < GRID_ROWS; r++) {
-        for (let c = 0; c < GRID_COLS; c++) {
-          const v = cells[r][c];
-          const brightness = Math.floor(v * 220);
-          ctx!.fillStyle = `rgb(${brightness},${brightness + 4},${brightness + 8})`;
-          ctx!.fillRect(c * cellW + 1, r * cellH + 1, cellW - 1.5, cellH - 1.5);
-        }
+      // ── CT background (fade-in only on first cycle)
+      ctx.globalAlpha = firstCycle ? ease(frame / P_BG_END) : 1;
+      ctx.drawImage(bgCanvas, 0, 0);
+      ctx.globalAlpha = 1;
+
+      // Scan line — first cycle only
+      if (firstCycle && frame < P_BG_END) {
+        const sl = (frame / P_BG_END) * H;
+        ctx.fillStyle = "rgba(56,189,248,0.10)";
+        ctx.fillRect(0, sl - 3, W, 6);
+        ctx.fillStyle = "rgba(56,189,248,0.04)";
+        ctx.fillRect(0, 0, W, sl);
       }
 
-      // Scan line effect
-      if (frame < 80) {
-        scanLine = (frame / 80) * H;
-        ctx!.fillStyle = "rgba(56, 189, 248, 0.12)";
-        ctx!.fillRect(0, scanLine - 3, W, 6);
-        ctx!.fillStyle = "rgba(56, 189, 248, 0.06)";
-        ctx!.fillRect(0, 0, W, scanLine);
-      }
+      const dashOff = (frame * 0.3) % 8;
 
-      // Bbox reveal after scan
-      if (frame > 70) {
-        bboxVisible = true;
-        bboxOpacity = Math.min(1, (frame - 70) / 20);
-      }
+      // ── Segmentation draw/erase indices
+      // "drawEnd" is how many seg points are currently visible from the front.
+      // "eraseStart" is how many have been erased from the front.
+      // Visible segment: [eraseStart, drawEnd]
+      let drawEnd = 0, eraseStart = 0;
 
-      if (bboxVisible) {
-        const bx = (stoneC - 1.5) * cellW;
-        const by = (stoneR - 1.5) * cellH;
-        const bw = 4 * cellW;
-        const bh = 4 * cellH;
-
-        // Bbox corners
-        const cornerLen = 8;
-        ctx!.strokeStyle = `rgba(56,189,248,${bboxOpacity})`;
-        ctx!.lineWidth = 1.5;
-
-        // TL
-        ctx!.beginPath(); ctx!.moveTo(bx, by + cornerLen); ctx!.lineTo(bx, by); ctx!.lineTo(bx + cornerLen, by); ctx!.stroke();
-        // TR
-        ctx!.beginPath(); ctx!.moveTo(bx + bw - cornerLen, by); ctx!.lineTo(bx + bw, by); ctx!.lineTo(bx + bw, by + cornerLen); ctx!.stroke();
-        // BL
-        ctx!.beginPath(); ctx!.moveTo(bx, by + bh - cornerLen); ctx!.lineTo(bx, by + bh); ctx!.lineTo(bx + cornerLen, by + bh); ctx!.stroke();
-        // BR
-        ctx!.beginPath(); ctx!.moveTo(bx + bw - cornerLen, by + bh); ctx!.lineTo(bx + bw, by + bh); ctx!.lineTo(bx + bw - cornerLen, by + bh); ctx!.stroke();
-
-        // Confidence label
-        if (bboxOpacity > 0.5) {
-          ctx!.fillStyle = `rgba(56,189,248,${bboxOpacity})`;
-          ctx!.font = `bold 9px monospace`;
-          ctx!.fillText("stone  0.91", bx, by - 4);
-        }
-
-        // Segmentation mask dots
-        for (let dr = -1; dr <= 1; dr++) {
-          for (let dc = -1; dc <= 1; dc++) {
-            const mx = (stoneC + dc) * cellW + cellW / 2;
-            const my = (stoneR + dr) * cellH + cellH / 2;
-            ctx!.beginPath();
-            ctx!.arc(mx, my, 2, 0, Math.PI * 2);
-            ctx!.fillStyle = `rgba(56,189,248,${bboxOpacity * 0.6})`;
-            ctx!.fill();
-          }
-        }
-      }
-
-      frame++;
-      if (frame < 160) {
-        animId = requestAnimationFrame(draw);
+      if (frame < P_BG_END) {
+        drawEnd = 0;
+      } else if (frame < P_SEG_DONE) {
+        drawEnd = Math.floor(ease((frame - P_BG_END) / (P_SEG_DONE - P_BG_END)) * N);
+      } else if (frame < P_KL_OUT) {
+        drawEnd = N;
+      } else if (frame < P_ERASE_END) {
+        // Erase from the start (same direction as draw)
+        drawEnd = N;
+        eraseStart = Math.floor(ease((frame - P_KL_OUT) / (P_ERASE_END - P_KL_OUT)) * N);
       } else {
-        // Hold final state, restart after delay
-        setTimeout(() => {
-          frame = 0;
-          bboxOpacity = 0;
-          bboxVisible = false;
-          scanLine = 0;
-          animId = requestAnimationFrame(draw);
-        }, 2400);
+        drawEnd = 0; eraseStart = 0;
       }
+
+      // Draw the visible segment of the boundary
+      if (drawEnd > eraseStart && eraseStart < N) {
+        const fullyDrawn = drawEnd >= N && eraseStart === 0;
+
+        // Filled polygon only when the outline is complete and not yet erasing
+        if (fullyDrawn) {
+          ctx.globalAlpha = 0.07;
+          ctx.fillStyle = "#38bdf8";
+          ctx.beginPath();
+          segPath.forEach(([px, py], i) => (i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py)));
+          ctx.closePath();
+          ctx.fill();
+          ctx.globalAlpha = 1;
+        }
+
+        // Outline (marching ants along cell edges)
+        ctx.globalAlpha = 0.92;
+        ctx.strokeStyle = "#38bdf8";
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([4, 4]);
+        ctx.lineDashOffset = -dashOff;
+        ctx.beginPath();
+        const end = Math.min(drawEnd, N - 1);
+        for (let i = eraseStart; i <= end; i++) {
+          const [px, py] = segPath[i];
+          i === eraseStart ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+        }
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.lineDashOffset = 0;
+        ctx.globalAlpha = 1;
+      }
+
+      // ── "kidney  seg" label
+      let kAlpha = 0;
+      if (frame >= P_KL_IN && frame < P_HOLD_END)
+        kAlpha = ease(clamp01((frame - P_KL_IN) / 15));
+      else if (frame >= P_HOLD_END && frame < P_FADE_END)
+        kAlpha = 1;
+      else if (frame >= P_FADE_END && frame < P_KL_OUT)
+        kAlpha = 1 - ease(clamp01((frame - P_FADE_END) / (P_KL_OUT - P_FADE_END)));
+      tag("kidney  seg", KCX - KRX - 4, KCY - KRY + 8, kAlpha, true);
+
+      // ── Detection box corners
+      let boxAlpha = 0;
+      if (frame >= P_DET_IN - 40 && frame < P_DET_IN)
+        boxAlpha = ease(clamp01((frame - (P_DET_IN - 40)) / 40));
+      else if (frame >= P_DET_IN && frame < P_HOLD_END)
+        boxAlpha = 1;
+      else if (frame >= P_HOLD_END && frame < P_FADE_END)
+        boxAlpha = 1 - ease(clamp01((frame - P_HOLD_END) / (P_FADE_END - P_HOLD_END)));
+      drawCorners(bx, by, bw, bh, boxAlpha);
+      if (boxAlpha > 0) {
+        ctx.globalAlpha = boxAlpha * 0.07;
+        ctx.fillStyle = "#38bdf8";
+        ctx.fillRect(bx, by, bw, bh);
+        ctx.globalAlpha = 1;
+      }
+
+      // ── "stone  conf=0.91" label
+      let sAlpha = 0;
+      if (frame >= P_STL_IN && frame < P_HOLD_END)
+        sAlpha = ease(clamp01((frame - P_STL_IN) / 20));
+      else if (frame >= P_HOLD_END && frame < P_FADE_END)
+        sAlpha = 1 - ease(clamp01((frame - P_HOLD_END) / (P_FADE_END - P_HOLD_END)));
+      tag("stone  conf=0.91", bx, by - 5, sAlpha);
+
+      // ── Advance frame, loop endlessly
+      frame = (frame + 1) % CYCLE;
+      if (frame === 0) firstCycle = false;
+
+      animId = requestAnimationFrame(draw);
     }
 
     animId = requestAnimationFrame(draw);
@@ -145,7 +304,6 @@ function CTGrid() {
       width={420}
       height={270}
       className="rounded-lg opacity-90"
-      style={{ imageRendering: "pixelated" }}
     />
   );
 }
@@ -161,9 +319,12 @@ const fadeUp = {
 
 interface HeroProps {
   onDemoClick?: () => void;
+  loadingProgress: number;
+  loadingMessage: string;
+  modelReady: boolean;
 }
 
-export default function Hero({ onDemoClick }: HeroProps) {
+export default function Hero({ onDemoClick, loadingProgress, loadingMessage, modelReady }: HeroProps) {
   return (
     <section
       id="hero"
@@ -308,6 +469,126 @@ export default function Hero({ onDemoClick }: HeroProps) {
                 View Pipeline ↓
               </button>
             </motion.div>
+
+            {/* Model status card */}
+            <motion.div
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.75, duration: 0.5 }}
+              style={{
+                marginTop: "1.5rem",
+                background: "var(--card-bg)",
+                border: `1px solid ${modelReady ? "rgba(74,222,128,0.2)" : "var(--card-border)"}`,
+                borderRadius: "10px",
+                padding: "0.85rem 1.25rem",
+                display: "flex",
+                alignItems: "center",
+                gap: "1rem",
+                maxWidth: "340px",
+                transition: "border-color 0.4s ease",
+              }}
+            >
+              <AnimatePresence mode="wait">
+                {!modelReady ? (
+                  <motion.div
+                    key="loading"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0, transition: { duration: 0.25 } }}
+                    style={{ display: "flex", alignItems: "center", gap: "1rem" }}
+                  >
+                    <CircularProgress
+                      progress={loadingProgress}
+                      size={40}
+                      strokeWidth={3}
+                      showPercent={false}
+                    />
+                    <div>
+                      <p style={{
+                        fontFamily: "monospace",
+                        fontSize: "0.58rem",
+                        color: "var(--text-secondary)",
+                        letterSpacing: "0.1em",
+                        textTransform: "uppercase",
+                        marginBottom: "3px",
+                        opacity: 0.65,
+                      }}>
+                        Model Status
+                      </p>
+                      <p style={{
+                        fontFamily: "'DM Sans', sans-serif",
+                        fontSize: "0.85rem",
+                        color: "var(--text-primary)",
+                        marginBottom: "2px",
+                      }}>
+                        {loadingMessage}
+                      </p>
+                      <p style={{
+                        fontFamily: "monospace",
+                        fontSize: "0.62rem",
+                        color: "var(--text-secondary)",
+                        opacity: 0.55,
+                      }}>
+                        YOLO26-seg warm start
+                      </p>
+                    </div>
+                  </motion.div>
+                ) : (
+                  <motion.div
+                    key="ready"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    transition={{ duration: 0.4 }}
+                    style={{ display: "flex", alignItems: "center", gap: "1rem" }}
+                  >
+                    <span style={{
+                      width: "40px",
+                      height: "40px",
+                      borderRadius: "50%",
+                      background: "rgba(74,222,128,0.1)",
+                      border: "1px solid rgba(74,222,128,0.25)",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      flexShrink: 0,
+                    }}>
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#4ade80" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                        <polyline points="20 6 9 17 4 12" />
+                      </svg>
+                    </span>
+                    <div>
+                      <p style={{
+                        fontFamily: "monospace",
+                        fontSize: "0.58rem",
+                        color: "var(--text-secondary)",
+                        letterSpacing: "0.1em",
+                        textTransform: "uppercase",
+                        marginBottom: "3px",
+                        opacity: 0.65,
+                      }}>
+                        Model Status
+                      </p>
+                      <p style={{
+                        fontFamily: "'DM Sans', sans-serif",
+                        fontSize: "0.85rem",
+                        color: "#4ade80",
+                        marginBottom: "2px",
+                      }}>
+                        Model hazır
+                      </p>
+                      <p style={{
+                        fontFamily: "monospace",
+                        fontSize: "0.62rem",
+                        color: "var(--text-secondary)",
+                        opacity: 0.55,
+                      }}>
+                        YOLO26-seg · online
+                      </p>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </motion.div>
           </div>
 
           {/* Right — CT Visualization */}
@@ -343,7 +624,7 @@ export default function Hero({ onDemoClick }: HeroProps) {
                 </span>
               </div>
 
-              <CTGrid />
+              <KidneyDetection />
 
               {/* Footer bar */}
               <div
