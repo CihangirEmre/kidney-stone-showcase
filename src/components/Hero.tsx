@@ -421,7 +421,7 @@ export default function Hero({ onDemoClick, loadingProgress, loadingMessage, mod
               initial="hidden"
               animate="visible"
               variants={fadeUp}
-              className="flex gap-8 mb-10"
+              className="hero-stats flex gap-8 mb-10"
             >
               {[
                 { value: "81.3%", label: "mAP50" },
@@ -472,6 +472,7 @@ export default function Hero({ onDemoClick, loadingProgress, loadingMessage, mod
 
             {/* Model status card */}
             <motion.div
+              className="hero-model-card"
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.75, duration: 0.5 }}
@@ -591,12 +592,12 @@ export default function Hero({ onDemoClick, loadingProgress, loadingMessage, mod
             </motion.div>
           </div>
 
-          {/* Right — CT Visualization */}
+          {/* Right — CT Visualization (hidden on mobile) */}
           <motion.div
             initial={{ opacity: 0, scale: 0.95 }}
             animate={{ opacity: 1, scale: 1 }}
             transition={{ delay: 0.4, duration: 0.8, ease: [0.25, 0.46, 0.45, 0.94] }}
-            className="flex-shrink-0 flex flex-col items-center gap-4"
+            className="ct-viz flex-shrink-0 flex flex-col items-center gap-4"
           >
             {/* Frame */}
             <div

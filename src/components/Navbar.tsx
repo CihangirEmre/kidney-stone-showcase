@@ -22,6 +22,7 @@ export default function Navbar() {
 
   return (
     <motion.nav
+      className="nav-wrapper"
       initial={{ opacity: 0, y: -16 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.5 }}
@@ -80,7 +81,8 @@ export default function Navbar() {
       </button>
 
       {/* Links */}
-      <div style={{ display: "flex", alignItems: "center", gap: "2rem" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: "1rem" }}>
+        <div className="nav-links-group" style={{ display: "flex", alignItems: "center", gap: "2rem" }}>
         {LINKS.map((link) => (
           <button
             key={link.href}
@@ -102,6 +104,7 @@ export default function Navbar() {
             {link.label}
           </button>
         ))}
+        </div>
 
         {/* CTA */}
         <button

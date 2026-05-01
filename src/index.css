@@ -16,6 +16,25 @@
 @media (max-width: 768px) {
   :root { --sidebar-width: 0px; }
   .sidebar { display: none !important; }
+
+  /* Navbar: reduce padding, hide nav links */
+  .nav-wrapper { padding: 0 1rem !important; }
+  .nav-links-group { display: none !important; }
+
+  /* Hero: hide CT canvas panel (too wide for mobile) */
+  .ct-viz { display: none !important; }
+
+  /* Hero: model status card full width */
+  .hero-model-card { max-width: 100% !important; }
+
+  /* Hero: stats row wraps */
+  .hero-stats { flex-wrap: wrap; gap: 1.5rem !important; }
+
+  /* LiveDemo: stack result cards vertically */
+  .result-grid {
+    grid-template-columns: 1fr !important;
+    max-width: 520px !important;
+  }
 }
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
