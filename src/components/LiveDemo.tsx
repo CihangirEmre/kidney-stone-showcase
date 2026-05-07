@@ -89,7 +89,7 @@ export default function LiveDemo({ modelReady, loadingProgress, loadingMessage }
 
   const handleDownloadPDF = async () => {
     if (!reportData) return;
-    const res = await fetch(`${HF_SPACE_URL}/generate_pdf`, {
+    const res = await fetch(`${HF_SPACE_URL}/download-pdf`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
