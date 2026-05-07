@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import CircularProgress from "./CircularProgress";
+import ReactMarkdown from 'react-markdown';
 
 const HF_SPACE_URL = "https://CihanEmre-ModelsSpace.hf.space";
 
@@ -35,6 +36,10 @@ export default function LiveDemo({ modelReady, loadingProgress, loadingMessage }
   const [result, setResult] = useState<Result | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
+  const [lang, setLang] = useState<"en" | "tr">("en")
+  const [reportTr, setReportTr] = useState<string | null>(null)
+  const [translating, setTranslating] = useState(false)
+  const [reportData, setReportData] = useState<{ report: string; annotated_image: string } | null>(null);
 
   useEffect(() => {
     if (modelReady && stage === "loading") {
@@ -69,16 +74,41 @@ export default function LiveDemo({ modelReady, loadingProgress, loadingMessage }
         method: "POST",
         body: formData,
       });
+      
 
       if (!res.ok) throw new Error("Analiz başarısız oldu.");
       const data: Result = await res.json();
       setResult(data);
       setStage("result");
+      setReportData({ report: data.report, annotated_image: data.annotated_image});
     } catch {
       setError("Bir hata oluştu. Lütfen tekrar deneyin.");
       setStage("upload");
     }
   };
+
+  const handleDownloadPDF = async () => {
+    if (!reportData) return;
+    const res = await fetch(`${HF_SPACE_URL}/predict`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        report: reportData.report,
+        annotated_image: reportData.annotated_image,
+      }),
+    });
+    
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "kidney_stone_report.pdf";
+  a.click();
+  URL.revokeObjectURL(url);
+      
+    
+     
+  }
 
   const handleReset = () => {
     setFile(null);
@@ -87,6 +117,26 @@ export default function LiveDemo({ modelReady, loadingProgress, loadingMessage }
     setError(null);
     setStage("upload");
   };
+  const translateReport = async () => {
+    if (reportTr) { setLang("tr"); return } // cache'de varsa tekrar isteme
+    setTranslating(true)
+    setLang("tr")
+    
+    try {
+      const res = await fetch(`${HF_SPACE_URL}/translate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ report: result?.report })
+      })
+      const data = await res.json()
+      setReportTr(data.report_tr)
+    } catch {
+      setLang("en")
+    } finally {
+      setTranslating(false)
+    }
+  }
+
 
   return (
     <section
@@ -435,18 +485,63 @@ export default function LiveDemo({ modelReady, loadingProgress, loadingMessage }
               flexDirection: "column",
               gap: "1rem",
             }}>
-              <p style={{ fontFamily: "monospace", fontSize: "0.75rem", color: "var(--text-secondary)", letterSpacing: "0.06em" }}>
-                RADIOLOGY REPORT
-              </p>
+              <div style={{ display: "flex", gap: "4px", background: "rgba(255,255,255,0.05)", borderRadius: "6px", padding: "3px" }}>
+                <button onClick={handleDownloadPDF} disabled={!reportData}>
+                PDF İndir
+              </button>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <p style={{ fontFamily: "monospace", fontSize: "0.75rem", color: "var(--text-secondary)", letterSpacing: "0.06em" }}>
+                  RADIOLOGY REPORT
+                </p>
+                <div style={{ display: "flex", gap: "4px", background: "rgba(255,255,255,0.05)", borderRadius: "6px", padding: "3px" }}>
+                  <button
+                    onClick={() => setLang("en")}
+                    style={{
+                      fontSize: "11px", fontWeight: 500, padding: "3px 10px", borderRadius: "4px",
+                      border: lang === "en" ? "1px solid rgba(255,255,255,0.15)" : "none",
+                      background: lang === "en" ? "var(--accent)" : "transparent",
+                      color: lang === "en" ? "#0a0d12" : "var(--text-secondary)",
+                      cursor: "pointer"
+                    }}
+                  >EN</button>
+                  <button
+                    onClick={translateReport}
+                    style={{
+                      fontSize: "11px", fontWeight: 500, padding: "3px 10px", borderRadius: "4px",
+                      border: lang === "tr" ? "1px solid rgba(255,255,255,0.15)" : "none",
+                      background: lang === "tr" ? "var(--accent)" : "transparent",
+                      color: lang === "tr" ? "#0a0d12" : "var(--text-secondary)",
+                      cursor: "pointer"
+                    }}
+                  >TR</button>
+                </div>
+              </div>
+
               <div style={{
                 flex: 1,
                 fontSize: "0.88rem",
                 color: "var(--text-primary)",
                 lineHeight: 1.8,
                 fontFamily: "'DM Sans', sans-serif",
-                whiteSpace: "pre-wrap",
               }}>
-                {result.report}
+                {translating ? (
+                  <p style={{ color: "var(--text-secondary)", fontSize: "0.85rem" }}>Türkçeye çevriliyor...</p>
+                ) : (
+                  <ReactMarkdown
+                    components={{
+                      h1: ({children}) => <h1 style={{ fontSize: "1rem", color: "var(--accent)", marginBottom: "0.5rem", fontFamily: "monospace", letterSpacing: "0.06em" }}>{children}</h1>,
+                      h2: ({children}) => <h2 style={{ fontSize: "0.9rem", color: "var(--accent)", marginTop: "1rem", marginBottom: "0.4rem", fontFamily: "monospace" }}>{children}</h2>,
+                      h3: ({children}) => <h3 style={{ fontSize: "0.85rem", color: "var(--text-primary)", marginTop: "0.75rem", marginBottom: "0.3rem" }}>{children}</h3>,
+                      p: ({children}) => <p style={{ marginBottom: "0.6rem", lineHeight: 1.8 }}>{children}</p>,
+                      li: ({children}) => <li style={{ marginLeft: "1rem", marginBottom: "0.3rem", listStyle: "disc", lineHeight: 1.7 }}>{children}</li>,
+                      ul: ({children}) => <ul style={{ marginBottom: "0.6rem" }}>{children}</ul>,
+                      strong: ({children}) => <strong style={{ color: "var(--text-primary)", fontWeight: 600 }}>{children}</strong>,
+                    }}
+                  >
+                    {lang === "en" ? result.report : (reportTr ?? result.report)}
+                  </ReactMarkdown>
+                )}
               </div>
 
               <button
