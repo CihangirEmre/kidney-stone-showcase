@@ -89,7 +89,7 @@ export default function LiveDemo({ modelReady, loadingProgress, loadingMessage }
 
   const handleDownloadPDF = async () => {
     if (!reportData) return;
-    const res = await fetch(`${HF_SPACE_URL}/predict`, {
+    const res = await fetch(`${HF_SPACE_URL}/generate_pdf`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -97,17 +97,16 @@ export default function LiveDemo({ modelReady, loadingProgress, loadingMessage }
         annotated_image: reportData.annotated_image,
       }),
     });
-    
-  const blob = await res.blob();
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = "kidney_stone_report.pdf";
-  a.click();
-  URL.revokeObjectURL(url);
-      
-    
-     
+
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "kidney_stone_report.pdf";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
   const handleReset = () => {
