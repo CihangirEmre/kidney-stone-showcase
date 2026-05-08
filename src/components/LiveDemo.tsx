@@ -89,24 +89,34 @@ export default function LiveDemo({ modelReady, loadingProgress, loadingMessage }
 
   const handleDownloadPDF = async () => {
     if (!reportData) return;
-    const res = await fetch(`${HF_SPACE_URL}/download-pdf`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        report: reportData.report,
-        annotated_image: reportData.annotated_image,
-      }),
-    });
+    try {
+      const res = await fetch(`${HF_SPACE_URL}/download-pdf`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          report: reportData.report,
+          annotated_image: reportData.annotated_image,
+        }),
+      });
 
-    const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "kidney_stone_report.pdf";
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        alert(`PDF indirilemedi: ${(err as { detail?: string }).detail ?? res.statusText}`);
+        return;
+      }
+
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "kidney_stone_report.pdf";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch {
+      alert("PDF indirme sırasında bir hata oluştu.");
+    }
   }
 
   const handleReset = () => {
