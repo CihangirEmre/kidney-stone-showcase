@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import Hero from './components/Hero';
 import LiveDemo from './components/LiveDemo';
-import Navbar from './components/Navbar';
+
 import Sidebar from './components/Sidebar';
 import { Analytics } from '@vercel/analytics/react';
 
@@ -78,7 +78,6 @@ function App() {
           loadingMessage={loadingMessage}
         />
       </div>
-      <Navbar />
       <Analytics />
     </>
   );

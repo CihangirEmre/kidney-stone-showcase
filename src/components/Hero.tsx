@@ -462,12 +462,6 @@ export default function Hero({ onDemoClick, loadingProgress, loadingMessage, mod
               >
                 Try Live Demo
               </button>
-              <button
-                className="cta-secondary px-7 py-3 rounded-lg text-sm font-medium tracking-wide transition-all"
-                style={{ fontFamily: "'DM Sans', sans-serif" }}
-              >
-                View Pipeline ↓
-              </button>
             </motion.div>
 
             {/* Model status card */}

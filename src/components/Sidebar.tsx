@@ -3,9 +3,7 @@ import { motion } from "framer-motion";
 
 const NAV_ITEMS = [
   { label: "Overview", href: "#hero" },
-  { label: "Methodology", href: "#methodology" },
   { label: "Pipeline", href: "#full-pipeline" },
-  { label: "Results", href: "#results" },
   { label: "Live Demo", href: "#live-demo" },
 ];
 
@@ -149,7 +147,7 @@ export default function Sidebar() {
         flexShrink: 0,
       }}>
         {[
-          { label: "AUTHOR", value: "Cihan Emre" },
+          { label: "AUTHOR", value: "Cihangir Emre" },
           { label: "INSTITUTION", value: "Kocaeli University" },
           { label: "YEAR", value: "2025" },
         ].map(({ label, value }) => (
