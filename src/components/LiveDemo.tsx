@@ -12,7 +12,16 @@ interface Detection {
   bbox: number[];
 }
 
+interface ChunkRef {
+  chroma_id: string;
+  content: string;
+  source: string;
+  page: number;
+  similarity_score: number;
+}
+
 interface Result {
+  session_id: string;
   has_stone: boolean;
   detections: {
     detections: Detection[];
@@ -21,6 +30,7 @@ interface Result {
   features: Record<string, unknown>;
   annotated_image: string;
   report: string;
+  retrieved_context: ChunkRef[];
 }
 
 interface LiveDemoProps {
@@ -28,6 +38,15 @@ interface LiveDemoProps {
   loadingProgress: number;
   loadingMessage: string;
 }
+
+const REPORT_SECTIONS: { value: string; label: string }[] = [
+  { value: "FINDINGS", label: "Bulgular" },
+  { value: "IMAGE_CHARACTERISTICS", label: "Görüntü Karakteristikleri" },
+  { value: "CLINICAL_INTERPRETATION", label: "Klinik Yorum" },
+  { value: "MANAGEMENT_CONSIDERATIONS", label: "Tedavi Önerileri" },
+  { value: "LIMITATIONS", label: "Kısıtlamalar" },
+  { value: "REFERENCES", label: "Referanslar" },
+];
 
 export default function LiveDemo({ modelReady, loadingProgress, loadingMessage }: LiveDemoProps) {
   const [stage, setStage] = useState<Stage>("loading");
@@ -40,6 +59,14 @@ export default function LiveDemo({ modelReady, loadingProgress, loadingMessage }
   const [reportTr, setReportTr] = useState<string | null>(null)
   const [translating, setTranslating] = useState(false)
   const [reportData, setReportData] = useState<{ report: string; annotated_image: string } | null>(null);
+
+  // Correction state
+  const [correctionOpen, setCorrectionOpen] = useState(false);
+  const [correctionSection, setCorrectionSection] = useState("FINDINGS");
+  const [correctionText, setCorrectionText] = useState("");
+  const [correctedSnippet, setCorrectedSnippet] = useState("");
+  const [correcting, setCorrecting] = useState(false);
+  const [correctionDone, setCorrectionDone] = useState<"success" | "error" | null>(null);
 
   useEffect(() => {
     if (modelReady && stage === "loading") {
@@ -74,7 +101,7 @@ export default function LiveDemo({ modelReady, loadingProgress, loadingMessage }
         method: "POST",
         body: formData,
       });
-      
+
 
       if (!res.ok) throw new Error("Analiz başarısız oldu.");
       const data: Result = await res.json();
@@ -125,12 +152,17 @@ export default function LiveDemo({ modelReady, loadingProgress, loadingMessage }
     setResult(null);
     setError(null);
     setStage("upload");
+    setCorrectionOpen(false);
+    setCorrectionText("");
+    setCorrectedSnippet("");
+    setCorrectionDone(null);
   };
+
   const translateReport = async () => {
-    if (reportTr) { setLang("tr"); return } // cache'de varsa tekrar isteme
+    if (reportTr) { setLang("tr"); return }
     setTranslating(true)
     setLang("tr")
-    
+
     try {
       const res = await fetch(`${HF_SPACE_URL}/translate`, {
         method: "POST",
@@ -146,6 +178,38 @@ export default function LiveDemo({ modelReady, loadingProgress, loadingMessage }
     }
   }
 
+  const handleCorrect = async () => {
+    if (!result || !correctionText.trim()) return;
+    setCorrecting(true);
+    setCorrectionDone(null);
+    try {
+      const res = await fetch(`${HF_SPACE_URL}/correct`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          session_id: result.session_id,
+          original_report: result.report,
+          retrieved_context: result.retrieved_context ?? [],
+          features: result.features,
+          section: correctionSection,
+          correction_text: correctionText,
+          corrected_snippet: correctedSnippet.trim() || null,
+        }),
+      });
+      if (!res.ok) throw new Error();
+      setCorrectionDone("success");
+      setCorrectionText("");
+      setCorrectedSnippet("");
+      setTimeout(() => {
+        setCorrectionOpen(false);
+        setCorrectionDone(null);
+      }, 2500);
+    } catch {
+      setCorrectionDone("error");
+    } finally {
+      setCorrecting(false);
+    }
+  };
 
   return (
     <section
@@ -412,167 +476,395 @@ export default function LiveDemo({ modelReady, loadingProgress, loadingMessage }
         {stage === "result" && result && (
           <motion.div
             key="result"
-            className="result-grid"
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             style={{
               width: "100%",
               maxWidth: "900px",
-              display: "grid",
-              gridTemplateColumns: "1fr 1fr",
-              gap: "2rem",
+              display: "flex",
+              flexDirection: "column",
+              gap: "1.5rem",
             }}
           >
-            {/* Sol — Görüntü */}
-            <div style={{
-              background: "var(--card-bg)",
-              border: "1px solid var(--card-border)",
-              borderRadius: "12px",
-              padding: "1.25rem",
-              display: "flex",
-              flexDirection: "column",
-              gap: "1rem",
-            }}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                <p style={{ fontFamily: "monospace", fontSize: "0.75rem", color: "var(--text-secondary)", letterSpacing: "0.06em" }}>
-                  ANNOTATED OUTPUT
-                </p>
-                <span style={{
-                  background: result.has_stone ? "rgba(56,189,248,0.1)" : "rgba(74,222,128,0.1)",
-                  color: result.has_stone ? "var(--accent)" : "#4ade80",
-                  fontSize: "0.7rem",
-                  fontFamily: "monospace",
-                  padding: "2px 10px",
-                  borderRadius: "999px",
-                  border: `1px solid ${result.has_stone ? "rgba(56,189,248,0.25)" : "rgba(74,222,128,0.25)"}`,
-                }}>
-                  {result.has_stone ? `${result.detections?.detections?.length ?? result.detections?.num_detections ?? "?"} taş tespit edildi` : "Taş tespit edilmedi"}
-                </span>
-              </div>
-
-              <img
-                src={`data:image/png;base64,${result.annotated_image}`}
-                alt="Annotated CT"
-                style={{
-                  width: "100%",
-                  borderRadius: "8px",
-                  objectFit: "contain",
-                  background: "#000",
-                }}
-              />
-
-              {result.detections.detections.length > 0 && (
-                <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-                  {result.detections.detections.map((d, i) => (
-                    <div key={i} style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      padding: "6px 10px",
-                      background: "rgba(56,189,248,0.05)",
-                      borderRadius: "6px",
-                      border: "1px solid rgba(56,189,248,0.1)",
-                    }}>
-                      <span style={{ fontFamily: "monospace", fontSize: "0.75rem", color: "var(--text-secondary)" }}>
-                        Taş #{i + 1}
-                      </span>
-                      <span style={{ fontFamily: "monospace", fontSize: "0.75rem", color: "var(--accent)" }}>
-                        {(d.confidence * 100).toFixed(1)}% güven
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            {/* Sağ — Rapor */}
-            <div style={{
-              background: "var(--card-bg)",
-              border: "1px solid var(--card-border)",
-              borderRadius: "12px",
-              padding: "1.25rem",
-              display: "flex",
-              flexDirection: "column",
-              gap: "1rem",
-            }}>
-              <div style={{ display: "flex", gap: "4px", background: "rgba(255,255,255,0.05)", borderRadius: "6px", padding: "3px" }}>
-                <button onClick={handleDownloadPDF} disabled={!reportData}>
-                PDF İndir
-              </button>
-              </div>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                <p style={{ fontFamily: "monospace", fontSize: "0.75rem", color: "var(--text-secondary)", letterSpacing: "0.06em" }}>
-                  RADIOLOGY REPORT
-                </p>
-                <div style={{ display: "flex", gap: "4px", background: "rgba(255,255,255,0.05)", borderRadius: "6px", padding: "3px" }}>
-                  <button
-                    onClick={() => setLang("en")}
-                    style={{
-                      fontSize: "11px", fontWeight: 500, padding: "3px 10px", borderRadius: "4px",
-                      border: lang === "en" ? "1px solid rgba(255,255,255,0.15)" : "none",
-                      background: lang === "en" ? "var(--accent)" : "transparent",
-                      color: lang === "en" ? "#0a0d12" : "var(--text-secondary)",
-                      cursor: "pointer"
-                    }}
-                  >EN</button>
-                  <button
-                    onClick={translateReport}
-                    style={{
-                      fontSize: "11px", fontWeight: 500, padding: "3px 10px", borderRadius: "4px",
-                      border: lang === "tr" ? "1px solid rgba(255,255,255,0.15)" : "none",
-                      background: lang === "tr" ? "var(--accent)" : "transparent",
-                      color: lang === "tr" ? "#0a0d12" : "var(--text-secondary)",
-                      cursor: "pointer"
-                    }}
-                  >TR</button>
-                </div>
-              </div>
-
+            {/* Sonuç grid */}
+            <div
+              className="result-grid"
+              style={{
+                display: "grid",
+                gridTemplateColumns: "1fr 1fr",
+                gap: "2rem",
+              }}
+            >
+              {/* Sol — Görüntü */}
               <div style={{
-                flex: 1,
-                fontSize: "0.88rem",
-                color: "var(--text-primary)",
-                lineHeight: 1.8,
-                fontFamily: "'DM Sans', sans-serif",
+                background: "var(--card-bg)",
+                border: "1px solid var(--card-border)",
+                borderRadius: "12px",
+                padding: "1.25rem",
+                display: "flex",
+                flexDirection: "column",
+                gap: "1rem",
               }}>
-                {translating ? (
-                  <p style={{ color: "var(--text-secondary)", fontSize: "0.85rem" }}>Türkçeye çevriliyor...</p>
-                ) : (
-                  <ReactMarkdown
-                    components={{
-                      h1: ({children}) => <h1 style={{ fontSize: "1rem", color: "var(--accent)", marginBottom: "0.5rem", fontFamily: "monospace", letterSpacing: "0.06em" }}>{children}</h1>,
-                      h2: ({children}) => <h2 style={{ fontSize: "0.9rem", color: "var(--accent)", marginTop: "1rem", marginBottom: "0.4rem", fontFamily: "monospace" }}>{children}</h2>,
-                      h3: ({children}) => <h3 style={{ fontSize: "0.85rem", color: "var(--text-primary)", marginTop: "0.75rem", marginBottom: "0.3rem" }}>{children}</h3>,
-                      p: ({children}) => <p style={{ marginBottom: "0.6rem", lineHeight: 1.8 }}>{children}</p>,
-                      li: ({children}) => <li style={{ marginLeft: "1rem", marginBottom: "0.3rem", listStyle: "disc", lineHeight: 1.7 }}>{children}</li>,
-                      ul: ({children}) => <ul style={{ marginBottom: "0.6rem" }}>{children}</ul>,
-                      strong: ({children}) => <strong style={{ color: "var(--text-primary)", fontWeight: 600 }}>{children}</strong>,
-                    }}
-                  >
-                    {lang === "en" ? result.report : (reportTr ?? result.report)}
-                  </ReactMarkdown>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                  <p style={{ fontFamily: "monospace", fontSize: "0.75rem", color: "var(--text-secondary)", letterSpacing: "0.06em" }}>
+                    ANNOTATED OUTPUT
+                  </p>
+                  <span style={{
+                    background: result.has_stone ? "rgba(56,189,248,0.1)" : "rgba(74,222,128,0.1)",
+                    color: result.has_stone ? "var(--accent)" : "#4ade80",
+                    fontSize: "0.7rem",
+                    fontFamily: "monospace",
+                    padding: "2px 10px",
+                    borderRadius: "999px",
+                    border: `1px solid ${result.has_stone ? "rgba(56,189,248,0.25)" : "rgba(74,222,128,0.25)"}`,
+                  }}>
+                    {result.has_stone ? `${result.detections?.detections?.length ?? result.detections?.num_detections ?? "?"} taş tespit edildi` : "Taş tespit edilmedi"}
+                  </span>
+                </div>
+
+                <img
+                  src={`data:image/png;base64,${result.annotated_image}`}
+                  alt="Annotated CT"
+                  style={{
+                    width: "100%",
+                    borderRadius: "8px",
+                    objectFit: "contain",
+                    background: "#000",
+                  }}
+                />
+
+                {result.detections.detections.length > 0 && (
+                  <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                    {result.detections.detections.map((d, i) => (
+                      <div key={i} style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        padding: "6px 10px",
+                        background: "rgba(56,189,248,0.05)",
+                        borderRadius: "6px",
+                        border: "1px solid rgba(56,189,248,0.1)",
+                      }}>
+                        <span style={{ fontFamily: "monospace", fontSize: "0.75rem", color: "var(--text-secondary)" }}>
+                          Taş #{i + 1}
+                        </span>
+                        <span style={{ fontFamily: "monospace", fontSize: "0.75rem", color: "var(--accent)" }}>
+                          {(d.confidence * 100).toFixed(1)}% güven
+                        </span>
+                      </div>
+                    ))}
+                  </div>
                 )}
               </div>
 
-              <button
-                onClick={handleReset}
-                style={{
-                  background: "transparent",
-                  color: "var(--text-secondary)",
-                  border: "1px solid var(--card-border)",
-                  borderRadius: "8px",
-                  padding: "0.7rem",
-                  fontSize: "0.85rem",
+              {/* Sağ — Rapor */}
+              <div style={{
+                background: "var(--card-bg)",
+                border: "1px solid var(--card-border)",
+                borderRadius: "12px",
+                padding: "1.25rem",
+                display: "flex",
+                flexDirection: "column",
+                gap: "1rem",
+              }}>
+                <div style={{ display: "flex", gap: "4px", background: "rgba(255,255,255,0.05)", borderRadius: "6px", padding: "3px" }}>
+                  <button onClick={handleDownloadPDF} disabled={!reportData}>
+                  PDF İndir
+                </button>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                  <p style={{ fontFamily: "monospace", fontSize: "0.75rem", color: "var(--text-secondary)", letterSpacing: "0.06em" }}>
+                    RADIOLOGY REPORT
+                  </p>
+                  <div style={{ display: "flex", gap: "4px", background: "rgba(255,255,255,0.05)", borderRadius: "6px", padding: "3px" }}>
+                    <button
+                      onClick={() => setLang("en")}
+                      style={{
+                        fontSize: "11px", fontWeight: 500, padding: "3px 10px", borderRadius: "4px",
+                        border: lang === "en" ? "1px solid rgba(255,255,255,0.15)" : "none",
+                        background: lang === "en" ? "var(--accent)" : "transparent",
+                        color: lang === "en" ? "#0a0d12" : "var(--text-secondary)",
+                        cursor: "pointer"
+                      }}
+                    >EN</button>
+                    <button
+                      onClick={translateReport}
+                      style={{
+                        fontSize: "11px", fontWeight: 500, padding: "3px 10px", borderRadius: "4px",
+                        border: lang === "tr" ? "1px solid rgba(255,255,255,0.15)" : "none",
+                        background: lang === "tr" ? "var(--accent)" : "transparent",
+                        color: lang === "tr" ? "#0a0d12" : "var(--text-secondary)",
+                        cursor: "pointer"
+                      }}
+                    >TR</button>
+                  </div>
+                </div>
+
+                <div style={{
+                  flex: 1,
+                  fontSize: "0.88rem",
+                  color: "var(--text-primary)",
+                  lineHeight: 1.8,
                   fontFamily: "'DM Sans', sans-serif",
-                  cursor: "pointer",
-                  transition: "all 0.2s ease",
-                  marginTop: "auto",
-                }}
-                onMouseEnter={e => (e.currentTarget.style.borderColor = "rgba(255,255,255,0.2)")}
-                onMouseLeave={e => (e.currentTarget.style.borderColor = "var(--card-border)")}
-              >
-                Yeni Görüntü Yükle
-              </button>
+                }}>
+                  {translating ? (
+                    <p style={{ color: "var(--text-secondary)", fontSize: "0.85rem" }}>Türkçeye çevriliyor...</p>
+                  ) : (
+                    <ReactMarkdown
+                      components={{
+                        h1: ({children}) => <h1 style={{ fontSize: "1rem", color: "var(--accent)", marginBottom: "0.5rem", fontFamily: "monospace", letterSpacing: "0.06em" }}>{children}</h1>,
+                        h2: ({children}) => <h2 style={{ fontSize: "0.9rem", color: "var(--accent)", marginTop: "1rem", marginBottom: "0.4rem", fontFamily: "monospace" }}>{children}</h2>,
+                        h3: ({children}) => <h3 style={{ fontSize: "0.85rem", color: "var(--text-primary)", marginTop: "0.75rem", marginBottom: "0.3rem" }}>{children}</h3>,
+                        p: ({children}) => <p style={{ marginBottom: "0.6rem", lineHeight: 1.8 }}>{children}</p>,
+                        li: ({children}) => <li style={{ marginLeft: "1rem", marginBottom: "0.3rem", listStyle: "disc", lineHeight: 1.7 }}>{children}</li>,
+                        ul: ({children}) => <ul style={{ marginBottom: "0.6rem" }}>{children}</ul>,
+                        strong: ({children}) => <strong style={{ color: "var(--text-primary)", fontWeight: 600 }}>{children}</strong>,
+                      }}
+                    >
+                      {lang === "en" ? result.report : (reportTr ?? result.report)}
+                    </ReactMarkdown>
+                  )}
+                </div>
+
+                {/* Hata Bildir butonu */}
+                <button
+                  onClick={() => { setCorrectionOpen(v => !v); setCorrectionDone(null); }}
+                  style={{
+                    background: correctionOpen ? "rgba(248,113,113,0.08)" : "transparent",
+                    color: correctionOpen ? "#f87171" : "var(--text-secondary)",
+                    border: `1px solid ${correctionOpen ? "rgba(248,113,113,0.25)" : "var(--card-border)"}`,
+                    borderRadius: "8px",
+                    padding: "0.6rem 0.75rem",
+                    fontSize: "0.82rem",
+                    fontFamily: "'DM Sans', sans-serif",
+                    cursor: "pointer",
+                    transition: "all 0.2s ease",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: "6px",
+                  }}
+                >
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="12" cy="12" r="10" />
+                    <line x1="12" y1="8" x2="12" y2="12" />
+                    <line x1="12" y1="16" x2="12.01" y2="16" />
+                  </svg>
+                  {correctionOpen ? "Formu Kapat" : "Hata Bildir"}
+                </button>
+
+                <button
+                  onClick={handleReset}
+                  style={{
+                    background: "transparent",
+                    color: "var(--text-secondary)",
+                    border: "1px solid var(--card-border)",
+                    borderRadius: "8px",
+                    padding: "0.7rem",
+                    fontSize: "0.85rem",
+                    fontFamily: "'DM Sans', sans-serif",
+                    cursor: "pointer",
+                    transition: "all 0.2s ease",
+                    marginTop: "auto",
+                  }}
+                  onMouseEnter={e => (e.currentTarget.style.borderColor = "rgba(255,255,255,0.2)")}
+                  onMouseLeave={e => (e.currentTarget.style.borderColor = "var(--card-border)")}
+                >
+                  Yeni Görüntü Yükle
+                </button>
+              </div>
             </div>
+
+            {/* Hata Bildirimi Formu */}
+            <AnimatePresence>
+              {correctionOpen && (
+                <motion.div
+                  key="correction-form"
+                  initial={{ opacity: 0, y: -8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -8 }}
+                  transition={{ duration: 0.2 }}
+                  style={{
+                    background: "var(--card-bg)",
+                    border: "1px solid rgba(248,113,113,0.2)",
+                    borderRadius: "12px",
+                    padding: "1.5rem",
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: "1.25rem",
+                  }}
+                >
+                  {/* Form başlığı */}
+                  <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between" }}>
+                    <div>
+                      <p style={{
+                        fontFamily: "monospace",
+                        fontSize: "0.72rem",
+                        color: "#f87171",
+                        letterSpacing: "0.1em",
+                        textTransform: "uppercase",
+                        marginBottom: "0.3rem",
+                      }}>
+                        HATA BİLDİRİM FORMU
+                      </p>
+                      <p style={{ fontSize: "0.82rem", color: "var(--text-secondary)", lineHeight: 1.5 }}>
+                        Rapordaki hatayı bildirerek sistemi iyileştirin. Düzeltmeler ChromaDB bilgi tabanına yansıtılır.
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Bölüm seçimi */}
+                  <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
+                    <label style={{
+                      fontFamily: "monospace",
+                      fontSize: "0.7rem",
+                      color: "var(--text-secondary)",
+                      letterSpacing: "0.08em",
+                      textTransform: "uppercase",
+                    }}>
+                      Hatanın Bulunduğu Bölüm
+                    </label>
+                    <select
+                      value={correctionSection}
+                      onChange={e => setCorrectionSection(e.target.value)}
+                      style={{
+                        background: "rgba(255,255,255,0.04)",
+                        border: "1px solid var(--card-border)",
+                        borderRadius: "8px",
+                        padding: "0.6rem 2rem 0.6rem 0.75rem",
+                        color: "var(--text-primary)",
+                        fontSize: "0.85rem",
+                        fontFamily: "'DM Sans', sans-serif",
+                        cursor: "pointer",
+                        appearance: "none",
+                        WebkitAppearance: "none",
+                        backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E")`,
+                        backgroundRepeat: "no-repeat",
+                        backgroundPosition: "right 0.75rem center",
+                        outline: "none",
+                      }}
+                    >
+                      {REPORT_SECTIONS.map(s => (
+                        <option key={s.value} value={s.value}>{s.label}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Ne yanlış / doğrusu ne */}
+                  <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
+                    <label style={{
+                      fontFamily: "monospace",
+                      fontSize: "0.7rem",
+                      color: "var(--text-secondary)",
+                      letterSpacing: "0.08em",
+                      textTransform: "uppercase",
+                    }}>
+                      Ne Yanlış / Doğrusu Ne{" "}
+                      <span style={{ color: "#f87171" }}>*</span>
+                    </label>
+                    <textarea
+                      value={correctionText}
+                      onChange={e => setCorrectionText(e.target.value)}
+                      placeholder="Hatayı ve doğrusunu açıklayın. Örn: &quot;Sağ böbrekte 4mm taş raporlanmış ancak görüntüde bu lokasyonda taş yok, sol böbrekte 3mm taş mevcut.&quot;"
+                      rows={3}
+                      style={{
+                        background: "rgba(255,255,255,0.04)",
+                        border: "1px solid var(--card-border)",
+                        borderRadius: "8px",
+                        padding: "0.75rem",
+                        color: "var(--text-primary)",
+                        fontSize: "0.85rem",
+                        fontFamily: "'DM Sans', sans-serif",
+                        resize: "vertical",
+                        lineHeight: 1.65,
+                        outline: "none",
+                        transition: "border-color 0.15s",
+                      }}
+                      onFocus={e => (e.currentTarget.style.borderColor = "rgba(248,113,113,0.35)")}
+                      onBlur={e => (e.currentTarget.style.borderColor = "var(--card-border)")}
+                    />
+                  </div>
+
+                  {/* Düzeltilmiş snippet (isteğe bağlı) */}
+                  <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
+                    <label style={{
+                      fontFamily: "monospace",
+                      fontSize: "0.7rem",
+                      color: "var(--text-secondary)",
+                      letterSpacing: "0.08em",
+                      textTransform: "uppercase",
+                    }}>
+                      Düzeltilmiş Metin{" "}
+                      <span style={{ opacity: 0.5, fontFamily: "'DM Sans', sans-serif", textTransform: "none", letterSpacing: 0, fontSize: "0.72rem" }}>(isteğe bağlı)</span>
+                    </label>
+                    <textarea
+                      value={correctedSnippet}
+                      onChange={e => setCorrectedSnippet(e.target.value)}
+                      placeholder="Doğru metin snippet'ini buraya yapıştırın..."
+                      rows={2}
+                      style={{
+                        background: "rgba(255,255,255,0.04)",
+                        border: "1px solid var(--card-border)",
+                        borderRadius: "8px",
+                        padding: "0.75rem",
+                        color: "var(--text-primary)",
+                        fontSize: "0.85rem",
+                        fontFamily: "'DM Sans', sans-serif",
+                        resize: "vertical",
+                        lineHeight: 1.65,
+                        outline: "none",
+                        transition: "border-color 0.15s",
+                      }}
+                      onFocus={e => (e.currentTarget.style.borderColor = "rgba(248,113,113,0.35)")}
+                      onBlur={e => (e.currentTarget.style.borderColor = "var(--card-border)")}
+                    />
+                  </div>
+
+                  {/* Geri bildirim mesajı + gönder butonu */}
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "1rem" }}>
+                    <div style={{ minHeight: "20px" }}>
+                      {correctionDone === "success" && (
+                        <motion.p
+                          initial={{ opacity: 0 }}
+                          animate={{ opacity: 1 }}
+                          style={{ color: "#4ade80", fontSize: "0.82rem", fontFamily: "monospace" }}
+                        >
+                          Düzeltme başarıyla gönderildi.
+                        </motion.p>
+                      )}
+                      {correctionDone === "error" && (
+                        <p style={{ color: "#f87171", fontSize: "0.82rem" }}>
+                          Gönderilemedi, lütfen tekrar deneyin.
+                        </p>
+                      )}
+                    </div>
+                    <button
+                      onClick={handleCorrect}
+                      disabled={correcting || !correctionText.trim()}
+                      style={{
+                        background: correctionText.trim() && !correcting
+                          ? "rgba(248,113,113,0.12)"
+                          : "rgba(255,255,255,0.04)",
+                        color: correctionText.trim() && !correcting
+                          ? "#f87171"
+                          : "var(--text-secondary)",
+                        border: `1px solid ${correctionText.trim() && !correcting ? "rgba(248,113,113,0.3)" : "var(--card-border)"}`,
+                        borderRadius: "8px",
+                        padding: "0.6rem 1.25rem",
+                        fontSize: "0.85rem",
+                        fontFamily: "'DM Sans', sans-serif",
+                        fontWeight: 500,
+                        cursor: correctionText.trim() && !correcting ? "pointer" : "not-allowed",
+                        transition: "all 0.2s ease",
+                        whiteSpace: "nowrap",
+                        flexShrink: 0,
+                      }}
+                    >
+                      {correcting ? "Gönderiliyor..." : "Düzeltmeyi Gönder"}
+                    </button>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
           </motion.div>
         )}
 
