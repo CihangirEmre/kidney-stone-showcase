@@ -67,6 +67,7 @@ export default function LiveDemo({ modelReady, loadingProgress, loadingMessage }
   const [correctedSnippet, setCorrectedSnippet] = useState("");
   const [correcting, setCorrecting] = useState(false);
   const [correctionDone, setCorrectionDone] = useState<"success" | "error" | null>(null);
+  const [regenerating, setRegenerating] = useState(false);
 
   useEffect(() => {
     if (modelReady && stage === "loading") {
@@ -200,6 +201,29 @@ export default function LiveDemo({ modelReady, loadingProgress, loadingMessage }
       setCorrectionDone("success");
       setCorrectionText("");
       setCorrectedSnippet("");
+
+      // Correction başarılı → raporu yenile
+      setRegenerating(true);
+      try {
+        const regenRes = await fetch(`${HF_SPACE_URL}/regenerate-report`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            session_id: result.session_id,
+            features: result.features,
+          }),
+        });
+        if (regenRes.ok) {
+          const regenData = await regenRes.json();
+          setResult(prev => prev ? { ...prev, report: regenData.report, retrieved_context: regenData.retrieved_context } : prev);
+          setReportData(prev => prev ? { ...prev, report: regenData.report } : prev);
+          setReportTr(null);
+          setLang("en");
+        }
+      } finally {
+        setRegenerating(false);
+      }
+
       setTimeout(() => {
         setCorrectionOpen(false);
         setCorrectionDone(null);
@@ -828,7 +852,7 @@ export default function LiveDemo({ modelReady, loadingProgress, loadingMessage }
                           animate={{ opacity: 1 }}
                           style={{ color: "#4ade80", fontSize: "0.82rem", fontFamily: "monospace" }}
                         >
-                          Düzeltme başarıyla gönderildi.
+                          {regenerating ? "Rapor yenileniyor..." : "Düzeltme başarıyla gönderildi."}
                         </motion.p>
                       )}
                       {correctionDone === "error" && (
